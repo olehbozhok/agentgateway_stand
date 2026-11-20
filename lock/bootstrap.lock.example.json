@@ -1,0 +1,23 @@
+{
+  "CEDARLING_APPLICATION_NAME": "agentgateway-stand",
+  "CEDARLING_POLICY_STORE_URI": "https://demoexample.jans.io/REPLACE/with/policy-store.cjar",
+  "CEDARLING_LOG_TYPE": "std_out",
+  "CEDARLING_LOG_LEVEL": "INFO",
+  "CEDARLING_JWT_SIG_VALIDATION": "disabled",
+  "CEDARLING_JWT_STATUS_VALIDATION": "disabled",
+  "CEDARLING_JWT_SIGNATURE_ALGORITHMS_SUPPORTED": ["RS256"],
+
+  "CEDARLING_LOCK": "enabled",
+  "CEDARLING_LOCK_SERVER_CONFIGURATION_URI": "https://demoexample.jans.io/.well-known/lock-server-configuration",
+  "CEDARLING_LOCK_SSA_JWT": "REPLACE_WITH_SSA",
+  "CEDARLING_LOCK_ACCEPT_INVALID_CERTS": "enabled",
+  "CEDARLING_LOCK_LOG_INTERVAL": 0,
+  "CEDARLING_LOCK_HEALTH_INTERVAL": 0,
+  "CEDARLING_LOCK_TELEMETRY_INTERVAL": 0,
+  "CEDARLING_LOCK_LISTEN_SSE": "disabled",
+
+  "CEDARLING_TRACE": "enabled",
+  "CEDARLING_TRACE_PRODUCER_ID": "agentgateway-stand",
+  "CEDARLING_TRACE_SIGNING_KEY": "/run/secrets/trace-key.pem",
+  "CEDARLING_TRACE_ENDPOINT": "discovered"
+}

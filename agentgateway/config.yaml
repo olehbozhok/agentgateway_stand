@@ -1,0 +1,104 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# agentgateway in front of an MCP server, with the authorization decision delegated to
+# Cedarling (flask-sidecar, AuthZEN API) through extAuthz over HTTP.
+config:
+  tracing:
+    otlpEndpoint: http://lgtm:4317
+    otlpProtocol: grpc
+    randomSampling: true
+
+frontendPolicies:
+  accessLog:
+    add:
+      user.sub: jwt.sub
+      mcp.tool: mcp.tool.name
+      authz.decision: extauthz.decision
+      authz.cedarling_request_id: extauthz.cedarling_request_id
+      authz.trace_execution_id: extauthz.trace_execution_id
+    otlp:
+      host: lgtm:4317
+      protocol: grpc
+
+binds:
+- port: 3000
+  listeners:
+  - name: mcp
+    protocol: HTTP
+    routes:
+    - name: mcp
+      matches:
+      - path:
+          pathPrefix: /mcp
+      policies:
+        cors:
+          allowOrigins: ["*"]
+          allowHeaders: ["*"]
+          exposeHeaders: ["Mcp-Session-Id"]
+        # 1. Authenticate the caller (same key Cedarling trusts).
+        jwtAuth:
+          mode: strict
+          issuer: http://idp:8080
+          audiences: [agentgateway-stand]
+          jwks:
+            url: http://idp:8080/jwks.json
+        # 2. Ask Cedarling for a decision, only for tools/call.
+        extAuthz:
+          conditional:
+          - condition: has(mcp.tool)
+            host: cedarling:5000
+            failureMode: deny
+            protocol:
+              http:
+                path: '"/cedarling/evaluation"'
+                addRequestHeaders:
+                  content-type: '"application/json"'
+                  :method: '"POST"'
+                  # TRACE correlation, read by the sidecar (see docs/sidecar-changes.md).
+                  # The W3C trace id from the client's traceparent becomes the TRACE
+                  # execution id; without a traceparent a random id is used.
+                  audit-trace-id: >-
+                    "traceparent" in request.headers
+                    ? request.headers["traceparent"].split("-")[1]
+                    : uuid()
+                  audit-execution-authority: jwt.iss
+                  audit-workload-id: '"agentgateway-stand"'
+                body: |
+                  {
+                    "subject": {
+                      "type": "user",
+                      "id": jwt.sub,
+                      "properties": {"tokens": [
+                        {"mapping": "Stand::Access_Token", "payload": jwt.rawToken.unredacted()}
+                      ]}
+                    },
+                    "action": {"name": "Stand::Action::\"call_tool\""},
+                    "resource": {
+                      "type": "Tool",
+                      "id": mcp.tool.name,
+                      "properties": {
+                        "cedar_entity_mapping": {"entity_type": "Stand::Tool", "id": mcp.tool.name},
+                        "name": mcp.tool.name
+                      }
+                    },
+                    "context": {}
+                  }
+                # The sidecar answers 200 for both permit and deny; the decision is in the body.
+                metadata:
+                  decision: json(response.body).decision
+                  cedarling_request_id: >-
+                    "request_id" in json(response.body).context
+                    ? json(response.body).context.request_id : ""
+                  trace_execution_id: >-
+                    "trace_execution_id" in json(response.body).context
+                    ? json(response.body).context.trace_execution_id : ""
+        # 3. Enforce the decision. Non-tool MCP calls (initialize, tools/list) pass.
+        authorization:
+          rules:
+          - require: '!has(mcp.tool) || extauthz.decision == true'
+      backends:
+      - mcp:
+          targets:
+          - name: tools
+            mcp:
+              host: http://mcp-server:8000/mcp

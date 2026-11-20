@@ -1,0 +1,107 @@
+# Cedar policy store for the stand. Loaded by the Cedarling sidecar through
+# CEDARLING_POLICY_STORE_LOCAL_FN (see bootstrap.json).
+#
+# Request shape (built by agentgateway, see agentgateway/config.yaml):
+#   action   Stand::Action::"call_tool"
+#   resource Stand::Tool::"<tool name>"  with attribute name = tool name
+#   tokens   one Stand::Access_Token; Cedarling exposes it as context.tokens.stand_access_token
+cedar_version: v4.0.0
+policy_stores:
+  agentgateway_stand:
+    cedar_version: v4.0.0
+    name: AgentgatewayStand
+    description: MCP tool access for the agentgateway + Cedarling stand
+    trusted_issuers:
+      StandIdp:
+        name: "Stand"
+        openid_configuration_endpoint: "http://idp:8080/.well-known/openid-configuration"
+        token_metadata:
+          access_token:
+            entity_type_name: "Stand::Access_Token"
+    policies:
+      echo_with_scope:
+        description: Any token with the mcp:echo scope may call echo
+        creation_date: "2026-11-20T00:00:00.000000"
+        policy_content:
+          encoding: none
+          content_type: cedar
+          body: |-
+            @id("echo_with_scope")
+            permit(
+                principal,
+                action == Stand::Action::"call_tool",
+                resource == Stand::Tool::"echo"
+            ) when {
+                context has tokens.stand_access_token &&
+                context.tokens.stand_access_token.hasTag("scope") &&
+                context.tokens.stand_access_token.getTag("scope").contains("mcp:echo")
+            };
+      sum_with_scope:
+        description: get_sum needs the mcp:sum scope
+        creation_date: "2026-11-20T00:00:00.000000"
+        policy_content:
+          encoding: none
+          content_type: cedar
+          body: |-
+            @id("sum_with_scope")
+            permit(
+                principal,
+                action == Stand::Action::"call_tool",
+                resource == Stand::Tool::"get_sum"
+            ) when {
+                context has tokens.stand_access_token &&
+                context.tokens.stand_access_token.hasTag("scope") &&
+                context.tokens.stand_access_token.getTag("scope").contains("mcp:sum")
+            };
+      admin_tools:
+        description: delete_records needs the mcp:admin scope
+        creation_date: "2026-11-20T00:00:00.000000"
+        policy_content:
+          encoding: none
+          content_type: cedar
+          body: |-
+            @id("admin_tools")
+            permit(
+                principal,
+                action == Stand::Action::"call_tool",
+                resource == Stand::Tool::"delete_records"
+            ) when {
+                context has tokens.stand_access_token &&
+                context.tokens.stand_access_token.hasTag("scope") &&
+                context.tokens.stand_access_token.getTag("scope").contains("mcp:admin")
+            };
+    schema:
+      encoding: none
+      content_type: cedar
+      body: |-
+        namespace Stand {
+          entity Access_Token = {
+            token_type: String,
+            jti: String,
+            iss: TrustedIssuer,
+            validated_at: Long,
+            exp: Long,
+            sub?: String,
+            client_id?: String,
+            scope?: Set<String>,
+          } tags Set<String>;
+          entity TrustedIssuer = {"issuer_entity_id": Jans::Url};
+          entity Tool = {"name": String};
+          entity Any;
+          action "call_tool" appliesTo {
+            principal: [Any],
+            resource: [Tool],
+            context: Context
+          };
+        }
+
+        namespace Jans {
+          type Url = {"host": String, "path": String, "protocol": String};
+        }
+
+        type Context = {
+          tokens: {
+            stand_access_token?: Stand::Access_Token,
+            total_token_count: Long
+          }
+        };

@@ -1,0 +1,16 @@
+# Generated per checkout by scripts/gen-keys.sh: private key and the JWKS derived from it
+generated/
+idp/jwks.json
+*.pem
+
+# Local overrides
+.env
+compose.override.yaml
+lock/bootstrap.lock.json
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+__pycache__/
