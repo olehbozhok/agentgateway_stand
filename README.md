@@ -45,6 +45,29 @@ eve    echo            scopes=<none>                 HTTP 403  trace_id=dbe006e1
 
 A single call with your own scopes: `scripts/demo.sh call <subject> <tool> '<json args>' [scope ...]`.
 
+## Benchmark
+
+`scripts/bench.sh` measures what the sidecar adds to an MCP tool call (~10 min, results in `bench-results/`, git-ignored). It compares, inside the Compose network:
+
+| Scenario | Path |
+|---|---|
+| `direct` | client → MCP server |
+| `gw-plain` | client → agentgateway (JWT only, route `/bench/plain`) → MCP server: the baseline |
+| `gw-cel` | + in-process `mcpAuthorization` CEL (route `/bench/cel`) |
+| `gw-extauthz` | + extAuthz → Cedarling sidecar (route `/mcp`) |
+| `pdp-only` | client → sidecar evaluation endpoint |
+
+Tools: `echo` (no work) and `wait` (sleeps 50/200/1000 ms, standing in for a tool that calls an external API). Requests are interleaved across scenarios in random order; the summary gives median deltas against `gw-plain` with 95% bootstrap CIs and Mann-Whitney p-values, then closed-loop throughput at 1/8/32 concurrent clients. Quick check: `scripts/bench.sh --rounds 200 --waits 50 --wait-budget 20 --seconds 5`.
+
+Cedarling's own decision time, without HTTP, inside the sidecar container:
+
+```bash
+T=$(scripts/mint-token.sh bench mcp:echo)
+docker compose exec -T -e BENCH_TOKEN="$T" cedarling python - < bench/cedarling_inproc.py
+```
+
+Results of 2026-11-23 on one WSL2 host: the sidecar path adds a median of 2.8 ms to an `echo` call (4 ms to `wait` calls), of which Cedarling's decision is about 0.05 ms; that is 48% of an empty tool call, 2% of a 200 ms one and 0.4% of a 1 s one.
+
 ## Endpoints
 
 | What | URL |
@@ -66,7 +89,8 @@ In Grafana, Loki query for the gateway's access logs: `{service_name="agentgatew
 | [cedarling/policy-store.yaml](cedarling/policy-store.yaml) | Cedar schema, policies and trusted issuer |
 | [idp/](idp/) | Static "IdP": OpenID discovery + JWKS served by nginx |
 | [mcp-server/](mcp-server/) | Demo MCP server (Python, FastMCP) |
-| [scripts/](scripts/) | `up`, `down`, `gen-keys`, `mint-token`, `demo`, `correlate` |
+| [scripts/](scripts/) | `up`, `down`, `gen-keys`, `mint-token`, `demo`, `correlate`, `bench` |
+| [bench/](bench/) | Latency benchmark client and in-process Cedarling timer |
 | [docs/sidecar-changes.md](docs/sidecar-changes.md) | What the Flask sidecar needs for proper tracing and OTEL logs |
 | [docs/lock-server.md](docs/lock-server.md) | Optional: Cedarling TRACE records to a Janssen Lock Server |
 

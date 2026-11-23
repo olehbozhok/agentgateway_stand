@@ -63,3 +63,11 @@ services:
         condition: service_healthy
       lgtm:
         condition: service_started
+
+  # Benchmark client, only started by scripts/bench.sh.
+  bench:
+    build: ./bench
+    profiles: ["bench"]
+    depends_on:
+      agentgateway:
+        condition: service_started

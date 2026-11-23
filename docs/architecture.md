@@ -58,7 +58,7 @@ agentgateway then starts a new trace, but CEL has no variable with the current t
 
 `grafana/otel-lgtm` is one container with an OpenTelemetry Collector, Tempo, Loki, Prometheus and Grafana. agentgateway sends:
 
-- traces: `config.tracing.otlpEndpoint: http://lgtm:4317` (gRPC), sampling every request;
+- traces: `frontendPolicies.tracing` to `lgtm:4317` (OTLP gRPC), sampling every request;
 - access logs: `frontendPolicies.accessLog.otlp` to the same receiver, with the extra fields from `accessLog.add` (`user.sub`, `mcp.tool`, `authz.*`).
 
 Prometheus metrics stay on agentgateway's `:15020/metrics` and are not scraped by the stand.

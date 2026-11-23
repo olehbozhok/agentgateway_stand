@@ -53,6 +53,23 @@ policy_stores:
                 context.tokens.stand_access_token.hasTag("scope") &&
                 context.tokens.stand_access_token.getTag("scope").contains("mcp:sum")
             };
+      wait_with_scope:
+        description: The benchmark tool wait needs the mcp:echo scope
+        creation_date: "2026-11-23T00:00:00.000000"
+        policy_content:
+          encoding: none
+          content_type: cedar
+          body: |-
+            @id("wait_with_scope")
+            permit(
+                principal,
+                action == Stand::Action::"call_tool",
+                resource == Stand::Tool::"wait"
+            ) when {
+                context has tokens.stand_access_token &&
+                context.tokens.stand_access_token.hasTag("scope") &&
+                context.tokens.stand_access_token.getTag("scope").contains("mcp:echo")
+            };
       admin_tools:
         description: delete_records needs the mcp:admin scope
         creation_date: "2026-11-20T00:00:00.000000"

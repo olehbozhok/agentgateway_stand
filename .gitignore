@@ -14,3 +14,6 @@ lock/bootstrap.lock.json
 *.swp
 .DS_Store
 __pycache__/
+
+# Benchmark output (scripts/bench.sh)
+bench-results/

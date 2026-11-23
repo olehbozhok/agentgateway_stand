@@ -2,13 +2,10 @@
 #
 # agentgateway in front of an MCP server, with the authorization decision delegated to
 # Cedarling (flask-sidecar, AuthZEN API) through extAuthz over HTTP.
-config:
-  tracing:
-    otlpEndpoint: http://lgtm:4317
-    otlpProtocol: grpc
-    randomSampling: true
-
 frontendPolicies:
+  tracing:
+    host: lgtm:4317
+    randomSampling: true
   accessLog:
     add:
       user.sub: jwt.sub
@@ -26,6 +23,38 @@ binds:
   - name: mcp
     protocol: HTTP
     routes:
+    # Benchmark baselines (scripts/bench.sh): same MCP backend, same JWT check,
+    # without and with in-process CEL authorization. No call to Cedarling.
+    - name: bench-plain
+      matches:
+      - path:
+          pathPrefix: /bench/plain
+      policies:
+        jwtAuth: &jwt
+          mode: strict
+          issuer: http://idp:8080
+          audiences: [agentgateway-stand]
+          jwks:
+            url: http://idp:8080/jwks.json
+      backends: &mcp_backend
+      - mcp:
+          targets:
+          - name: tools
+            mcp:
+              host: http://mcp-server:8000/mcp
+    - name: bench-cel
+      matches:
+      - path:
+          pathPrefix: /bench/cel
+      policies:
+        jwtAuth: *jwt
+        # The Cedar policies of cedarling/policy-store.yaml, written as agentgateway CEL.
+        mcpAuthorization:
+          rules:
+          - 'mcp.tool.name in ["echo", "wait"] && "mcp:echo" in jwt.scope'
+          - 'mcp.tool.name == "get_sum" && "mcp:sum" in jwt.scope'
+          - 'mcp.tool.name == "delete_records" && "mcp:admin" in jwt.scope'
+      backends: *mcp_backend
     - name: mcp
       matches:
       - path:
