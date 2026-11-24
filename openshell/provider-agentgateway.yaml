@@ -1,0 +1,39 @@
+# OpenShell provider profile: the agent's access token for agentgateway.
+#
+# The OpenShell gateway, outside the sandbox, gets the token from the Janssen Auth Server with
+# client_credentials and refreshes it (Janssen tokens live 300 s). The sandbox sees only a
+# placeholder in MCP_TOKEN; the supervisor replaces it with the token on requests to
+# agentgateway, and nowhere else. The provider's endpoint and binary also become the network
+# rule that lets the agent reach agentgateway.
+id: stand-agentgateway
+display_name: Stand agentgateway
+description: Access token from the stand's Janssen Auth Server for agentgateway
+category: other
+credentials:
+  - name: mcp_token
+    description: Janssen access token (JWT) with the agent's MCP scopes
+    env_vars: [MCP_TOKEN]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    refresh:
+      strategy: oauth2_client_credentials
+      token_url: https://jans.stand.test/jans-auth/restv1/token
+      scopes: [mcp:echo, mcp:sum]
+      refresh_before: "120s"
+      max_lifetime: "300s"
+      material:
+        - name: client_id
+          required: true
+          secret: false
+        - name: client_secret
+          required: true
+          secret: true
+endpoints:
+  - host: host.docker.internal
+    port: 3100   # agentgateway-e2e
+    protocol: rest
+    access: full
+    enforcement: enforce
+binaries:
+  - path: /usr/bin/python3*

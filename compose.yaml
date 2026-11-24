@@ -1,5 +1,11 @@
 name: agw-stand
 
+# The e2e profile adds the Janssen Auth Server and OpenShell (docs/e2e-openshell-design.md).
+include:
+  - jans/compose.yaml
+  - openshell/compose.yaml
+  - e2e/compose.yaml
+
 services:
   # Grafana LGTM all-in-one: OTLP receiver (collector) + Tempo (traces) + Loki (logs)
   # + Prometheus (metrics) + Grafana UI. Single container, development use only.
@@ -22,6 +28,10 @@ services:
 
   mcp-server:
     build: ./mcp-server
+    ports:
+      # Reachable from the host on purpose: the e2e test proves that the sandboxed agent cannot
+      # call it directly although the port is open (docs/e2e-openshell-design.md).
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 1)"]
       interval: 2s

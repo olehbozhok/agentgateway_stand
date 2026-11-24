@@ -1,0 +1,99 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# agentgateway of the e2e profile (service agentgateway-e2e, host port 3100): the /mcp route of
+# agentgateway/config.yaml, authenticating with the Janssen Auth Server instead of the static
+# IdP. A separate instance because agentgateway exits when a JWKS cannot be loaded at start:
+# with the Auth Server in the default gateway, the stand would not start without it.
+# Same Cedarling sidecar, same MCP server, same telemetry.
+frontendPolicies:
+  tracing:
+    host: lgtm:4317
+    randomSampling: true
+  accessLog:
+    add:
+      user.sub: jwt.sub
+      mcp.tool: mcp.tool.name
+      authz.decision: extauthz.decision
+      authz.cedarling_request_id: extauthz.cedarling_request_id
+      authz.trace_execution_id: extauthz.trace_execution_id
+    otlp:
+      host: lgtm:4317
+      protocol: grpc
+
+binds:
+- port: 3000
+  listeners:
+  - name: mcp
+    protocol: HTTP
+    routes:
+    - name: mcp
+      matches:
+      - path:
+          pathPrefix: /mcp
+      policies:
+        # 1. Authenticate the caller with the Auth Server's keys. Its certificate is trusted
+        #    through SSL_CERT_FILE (e2e/compose.yaml).
+        jwtAuth:
+          mode: strict
+          issuer: https://jans.stand.test
+          audiences: [agentgateway-stand]
+          jwks:
+            url: https://jans.stand.test/jans-auth/restv1/jwks
+        # 2. Ask Cedarling for a decision, only for tools/call.
+        extAuthz:
+          conditional:
+          - condition: has(mcp.tool)
+            host: cedarling:5000
+            failureMode: deny
+            protocol:
+              http:
+                path: '"/cedarling/evaluation"'
+                addRequestHeaders:
+                  content-type: '"application/json"'
+                  :method: '"POST"'
+                  audit-trace-id: >-
+                    "traceparent" in request.headers
+                    ? request.headers["traceparent"].split("-")[1]
+                    : uuid()
+                  audit-execution-authority: jwt.iss
+                  audit-workload-id: '"agentgateway-e2e"'
+                # Cedarling gives each trusted issuer its own token entity type:
+                # Jans::Access_Token for this issuer (cedarling/policy-store.yaml).
+                body: |
+                  {
+                    "subject": {
+                      "type": "user",
+                      "id": jwt.sub,
+                      "properties": {"tokens": [
+                        {"mapping": "Jans::Access_Token", "payload": jwt.rawToken.unredacted()}
+                      ]}
+                    },
+                    "action": {"name": "Stand::Action::\"call_tool\""},
+                    "resource": {
+                      "type": "Tool",
+                      "id": mcp.tool.name,
+                      "properties": {
+                        "cedar_entity_mapping": {"entity_type": "Stand::Tool", "id": mcp.tool.name},
+                        "name": mcp.tool.name
+                      }
+                    },
+                    "context": {}
+                  }
+                metadata:
+                  decision: json(response.body).decision
+                  cedarling_request_id: >-
+                    "request_id" in json(response.body).context
+                    ? json(response.body).context.request_id : ""
+                  trace_execution_id: >-
+                    "trace_execution_id" in json(response.body).context
+                    ? json(response.body).context.trace_execution_id : ""
+        # 3. Enforce the decision. Non-tool MCP calls (initialize, tools/list) pass.
+        authorization:
+          rules:
+          - require: '!has(mcp.tool) || extauthz.decision == true'
+      backends:
+      - mcp:
+          targets:
+          - name: tools
+            mcp:
+              host: http://mcp-server:8000/mcp

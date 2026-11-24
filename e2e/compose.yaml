@@ -1,0 +1,105 @@
+# e2e profile: the demo page, the agent image with its control run, and the test runner.
+#   docker compose --profile e2e up -d --build          start everything (scripts/e2e.sh does both)
+#   docker compose --profile e2e run --rm e2e           run the test; exit code 0 = pass
+# Design: docs/e2e-openshell-design.md
+
+x-e2e: &e2e
+  profiles: ["e2e"]
+
+services:
+  # agentgateway that trusts the Auth Server (e2e/agentgateway/config.yaml); the sandboxed agent
+  # calls it on host.docker.internal:3100. Starts after the Auth Server, whose JWKS it loads.
+  agentgateway-e2e:
+    <<: *e2e
+    image: ${AGENTGATEWAY_IMAGE:-cr.agentgateway.dev/agentgateway:v1.7.0}
+    command: ["-f", "/config/config.yaml"]
+    environment:
+      # Trust the stand CA for https://jans.stand.test (agentgateway reads SSL_CERT_FILE).
+      SSL_CERT_FILE: /jans/ca.crt
+    volumes:
+      - ./agentgateway:/config:ro
+      - jans-init:/jans:ro
+    ports:
+      - "127.0.0.1:3100:3000"
+    restart: on-failure
+    depends_on:
+      jans:
+        condition: service_healthy
+      traefik:
+        condition: service_started
+      mcp-server:
+        condition: service_healthy
+      cedarling:
+        condition: service_healthy
+      lgtm:
+        condition: service_started
+
+  demo-page:
+    <<: *e2e
+    image: python:3.12-slim
+    command: ["python3", "-u", "/app/server.py"]
+    volumes:
+      - ../demo-page/server.py:/app/server.py:ro
+      - e2e-state:/state
+    ports:
+      - "127.0.0.1:3080:8080"
+    healthcheck:
+      test: ["CMD", "test", "-s", "/state/nonce"]
+      interval: 2s
+      retries: 15
+
+  # Builds agw-stand-agent:e2e, the image OpenShell starts the sandbox from, and runs it once
+  # without a sandbox: the control run, whose result the runner reads from the state volume.
+  agent-control:
+    <<: *e2e
+    build: ../agent
+    image: agw-stand-agent:e2e
+    entrypoint: ["sh", "-c", "python3 /usr/local/bin/agent.py control > /state/control.jsonl"]
+    volumes:
+      - e2e-state:/state
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+      demo-page:
+        condition: service_healthy
+    restart: "no"
+
+  # Its own profile, so `up` does not start it; `run` activates it.
+  e2e:
+    profiles: ["e2e-run"]
+    build: .
+    image: agw-stand-e2e
+    command: ["bash", "/stand/e2e/run.sh"]
+    environment:
+      JANS_URL: https://jans.stand.test
+      JANS_CA: /jans/ca.crt
+      # Stand-only credentials; the admin client is pinned in jans/compose.yaml.
+      ADMIN_CLIENT_ID: ${JANS_ADMIN_CLIENT_ID:-5a1e2e00-0000-4000-8000-0000000ad300}
+      ADMIN_CLIENT_SECRET: ${JANS_ADMIN_CLIENT_SECRET:-stand-admin-secret}
+      AGENT_CLIENT_ID: ${AGENT_CLIENT_ID:-5a1e2e00-0000-4000-8000-0000000a6e01}
+      AGENT_CLIENT_SECRET: ${AGENT_CLIENT_SECRET:-stand-agent-secret}
+      OPENSHELL_GATEWAY_URL: http://openshell-gateway:8080
+      AGENT_IMAGE: agw-stand-agent:e2e
+      GRAFANA_URL: http://lgtm:3000
+    volumes:
+      - ../jans/setup.sh:/stand/jans/setup.sh:ro
+      - ../openshell:/stand/openshell:ro
+      - ./run.sh:/stand/e2e/run.sh:ro
+      - jans-init:/jans:ro
+      - e2e-state:/state:ro
+    depends_on:
+      jans:
+        condition: service_healthy
+      traefik:
+        condition: service_started
+      openshell-gateway:
+        condition: service_started
+      agentgateway-e2e:
+        condition: service_started
+      demo-page:
+        condition: service_healthy
+      agent-control:
+        condition: service_completed_successfully
+
+volumes:
+  e2e-state:

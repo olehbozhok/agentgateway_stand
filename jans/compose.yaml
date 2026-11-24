@@ -1,0 +1,164 @@
+# Janssen Auth Server owned by the stand, started only with the e2e profile.
+# Adapted from automation/start_janssen_aio_demo.sh in the jans repo: same images and services,
+# but relative paths, named volumes, certificates made by an init container, and Traefik
+# configured from a file instead of the Docker socket.
+#
+# Inside the Compose network the server is https://jans.stand.test, an alias of traefik. The
+# name is fixed: e2e/agentgateway, cedarling/policy-store.yaml and openshell/ refer to it.
+# From the host: https://127.0.0.1:8443 (curl --resolve jans.stand.test:8443:127.0.0.1).
+
+x-e2e: &e2e
+  profiles: ["e2e"]
+
+services:
+  jans-init:
+    <<: *e2e
+    image: &jans-image ${JANS_IMAGE:-ghcr.io/janssenproject/jans/all-in-one:0.0.0-nightly}
+    user: "0"
+    entrypoint: ["sh", "/stand/init.sh"]
+    environment:
+      JANS_FQDN: jans.stand.test
+    volumes:
+      - ./init.sh:/stand/init.sh:ro
+      - jans-init:/out
+    restart: "no"
+
+  consul:
+    <<: *e2e
+    image: hashicorp/consul:1.22
+    command: agent -server -bootstrap -ui
+    environment:
+      CONSUL_BIND_INTERFACE: eth0
+      CONSUL_CLIENT_INTERFACE: eth0
+    volumes:
+      - consul-data:/consul/data
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  vault:
+    <<: *e2e
+    image: hashicorp/vault:1.21
+    command: vault server -config=/vault/config
+    entrypoint: ["sh", "/stand/vault-entrypoint.sh"]
+    cap_add: [IPC_LOCK]
+    environment:
+      VAULT_REDIRECT_INTERFACE: eth0
+      VAULT_CLUSTER_INTERFACE: eth0
+      VAULT_ADDR: http://0.0.0.0:8200
+      VAULT_LOCAL_CONFIG: '{"backend":{"consul":{"address":"consul:8500","path":"vault/"}},"listener":{"tcp":{"address":"0.0.0.0:8200","tls_disable":1}},"ui":true}'
+    volumes:
+      - ./vault-entrypoint.sh:/stand/vault-entrypoint.sh:ro
+      - ./vault-policy.hcl:/stand/vault-policy.hcl:ro
+      - vault-config:/vault/config
+      - vault-approle:/vault/approle
+    depends_on: [consul]
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test -s /vault/approle/vault_role_id && test -s /vault/approle/vault_secret_id"]
+      interval: 3s
+      retries: 40
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  postgresql:
+    <<: *e2e
+    image: postgres:14
+    environment:
+      POSTGRES_USER: jans
+      POSTGRES_PASSWORD: Test1234#
+      POSTGRES_DB: jans
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "jans"]
+      interval: 3s
+      retries: 40
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  traefik:
+    <<: *e2e
+    image: traefik:v3.6.1@sha256:fd5932c796f7e2db9fd6bff485ef693d53797f0ee8ad03dc68aa424ea6f21958
+    command:
+      - --providers.file.filename=/stand/traefik.yaml
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
+      - --log.level=warn
+    volumes:
+      - ./traefik.yaml:/stand/traefik.yaml:ro
+      - jans-init:/certs:ro
+    ports:
+      - "127.0.0.1:8443:443"
+    depends_on:
+      jans-init:
+        condition: service_completed_successfully
+    networks:
+      default:
+        # Every container on the stand network reaches the Auth Server by its public name.
+        aliases:
+          - jans.stand.test
+
+  jans:
+    <<: *e2e
+    image: *jans-image
+    environment:
+      CN_CONFIG_CONSUL_HOST: consul
+      CN_CONFIG_CONSUL_NAMESPACE: jans
+      CN_SECRET_VAULT_ADDR: http://vault:8200
+      CN_SECRET_VAULT_PREFIX: jans
+      CN_SECRET_VAULT_ROLE_ID_FILE: /etc/jans/vault/vault_role_id
+      CN_SECRET_VAULT_SECRET_ID_FILE: /etc/jans/vault/vault_secret_id
+      CN_PERSISTENCE_TYPE: sql
+      CN_SQL_DB_HOST: postgresql
+      CN_SQL_DB_PORT: "5432"
+      CN_SQL_DB_NAME: jans
+      CN_SQL_DB_USER: jans
+      CN_SQL_DB_DIALECT: pgsql
+      CN_AUTH_APP_LOGGERS: '{"auth_log_target":"STDOUT","auth_log_level":"INFO"}'
+      CN_CONFIG_API_APP_LOGGERS: '{"config_api_log_target":"STDOUT","config_api_log_level":"INFO"}'
+      CN_LOCK_ENABLED: "true"
+      CN_CONFIG_API_PLUGINS: lock
+      CN_AIO_COMPONENTS: configurator,persistence-loader,jans-auth,jans-config-api
+      # Pins the config API test client (all config API scopes) on first start, so the e2e
+      # runner can create its scopes and client. Stand-only credentials; see e2e/compose.yaml.
+      CN_CONFIG_API_TEST_CLIENT_ID: ${JANS_ADMIN_CLIENT_ID:-5a1e2e00-0000-4000-8000-0000000ad300}
+      CN_CONFIG_API_TEST_CLIENT_SECRET: ${JANS_ADMIN_CLIENT_SECRET:-stand-admin-secret}
+    volumes:
+      # Only the file: the server writes other files into /etc/jans/conf.
+      - type: volume
+        source: jans-init
+        target: /etc/jans/conf/configuration.json
+        read_only: true
+        volume:
+          subpath: configuration.json
+      - jans-init:/opt/jans/configurator/certs
+      - vault-approle:/etc/jans/vault:ro
+    depends_on:
+      jans-init:
+        condition: service_completed_successfully
+      vault:
+        condition: service_healthy
+      postgresql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "/app/jans_aio/jans_auth/healthcheck.py"]
+      interval: 15s
+      timeout: 20s
+      retries: 60
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+volumes:
+  jans-init:
+  consul-data:
+  vault-config:
+  vault-approle:
+  postgres-data:

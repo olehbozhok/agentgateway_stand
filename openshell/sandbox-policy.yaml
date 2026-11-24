@@ -1,0 +1,13 @@
+# Base network policy of the agent's sandbox. Everything not listed is denied. agentgateway is
+# not listed here: the stand-agentgateway provider adds that rule together with the token.
+version: 1
+network_policies:
+  demo_page:
+    endpoints:
+      - host: host.docker.internal
+        port: 3080
+        protocol: rest
+        access: read-only
+        enforcement: enforce
+    binaries:
+      - path: /usr/bin/python3*

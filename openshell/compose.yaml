@@ -1,0 +1,57 @@
+# OpenShell gateway for the e2e profile, based on deploy/docker/docker-compose.yml of OpenShell
+# v0.1.10. It creates sandboxes as sibling containers through the Docker socket.
+#
+# OPENSHELL_DATA_DIR must be an absolute path that is the same on the host and in the
+# container: the gateway extracts the supervisor binary there and passes that path to Docker
+# as a bind-mount source for every sandbox. It holds only regenerable state.
+
+x-e2e: &e2e
+  profiles: ["e2e"]
+
+x-openshell-data: &openshell-data
+  type: bind
+  source: ${OPENSHELL_DATA_DIR:-/tmp/agw-stand-openshell}
+  target: ${OPENSHELL_DATA_DIR:-/tmp/agw-stand-openshell}
+  bind:
+    create_host_path: true
+
+services:
+  openshell-init:
+    <<: *e2e
+    image: &openshell-gateway-image quay.io/ai-openshell/gateway:${OPENSHELL_VERSION:-0.1.10}
+    user: "0"
+    command: ["generate-certs", "--output-dir", "/var/lib/openshell/tls"]
+    volumes:
+      - <<: *openshell-data
+        target: /var/lib/openshell
+    restart: "no"
+
+  openshell-gateway:
+    <<: *e2e
+    image: *openshell-gateway-image
+    # The image's default CMD passes --bind-address flags that would override gateway.toml.
+    command: []
+    # Root for the Docker socket and the data directory; the agent never runs as root.
+    user: "0"
+    environment:
+      OPENSHELL_GATEWAY_CONFIG: /etc/openshell/gateway.toml
+      OPENSHELL_DB_URL: "sqlite:/var/lib/openshell/gateway.db?mode=rwc"
+      XDG_DATA_HOME: ${OPENSHELL_DATA_DIR:-/tmp/agw-stand-openshell}
+      HOME: ${OPENSHELL_DATA_DIR:-/tmp/agw-stand-openshell}
+      # Trust the stand CA when minting the agent's token at https://jans.stand.test.
+      SSL_CERT_FILE: /jans/ca.crt
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - *openshell-data
+      - <<: *openshell-data
+        target: /var/lib/openshell
+      - ./gateway.toml:/etc/openshell/gateway.toml:ro
+      - jans-init:/jans:ro
+    ports:
+      # Sandbox supervisors use host networking and call back on this loopback port.
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      openshell-init:
+        condition: service_completed_successfully
+      lgtm:
+        condition: service_started

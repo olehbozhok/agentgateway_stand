@@ -1,0 +1,22 @@
+# Traefik file provider: TLS for the Auth Server's public name, forwarded to the all-in-one
+# container's plain HTTP port. The certificate comes from the jans-init volume.
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/web_https.crt
+        keyFile: /certs/web_https.key
+
+http:
+  routers:
+    jans:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [websecure]
+      service: jans
+      tls: {}
+  services:
+    jans:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: "http://jans:8080"
