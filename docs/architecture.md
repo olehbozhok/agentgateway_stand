@@ -34,6 +34,8 @@ Anything without a matching `permit` is denied (Cedar default deny). Token claim
 
 ## Tracing and correlation
 
+How agentgateway receives, continues and propagates the trace id, step by step: [tracing.md](tracing.md).
+
 | Id | Created by | Where it shows up |
 |---|---|---|
 | W3C trace id | the client's `traceparent`; agentgateway continues it | Tempo spans; `trace_id` of the OTLP access log record in Loki |
@@ -52,7 +54,7 @@ Gaps today, all on the sidecar side (details and fixes in [sidecar-changes.md](s
 
 ### Without a client `traceparent`
 
-agentgateway then starts a new trace, but CEL has no variable with the current trace id, so the config falls back to `uuid()` for `Audit-Trace-ID`. The access log still has both the trace id and `authz.trace_execution_id`, so correlation through `request_id` keeps working; only the equality "trace id = TRACE execution id" is lost.
+agentgateway starts a new trace and writes its own `traceparent` onto the request before route policies run, so the `Audit-Trace-ID` CEL still gets the trace id: "trace id = TRACE execution id" holds. The `uuid()` fallback fires only for a request that is not sampled and arrived without a header. Full details: [tracing.md](tracing.md).
 
 ## Telemetry pipeline
 

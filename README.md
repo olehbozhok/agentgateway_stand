@@ -91,6 +91,7 @@ In Grafana, Loki query for the gateway's access logs: `{service_name="agentgatew
 | [mcp-server/](mcp-server/) | Demo MCP server (Python, FastMCP) |
 | [scripts/](scripts/) | `up`, `down`, `gen-keys`, `mint-token`, `demo`, `correlate`, `bench` |
 | [bench/](bench/) | Latency benchmark client and in-process Cedarling timer |
+| [docs/tracing.md](docs/tracing.md) | How the W3C trace id enters agentgateway and where it goes next |
 | [docs/sidecar-changes.md](docs/sidecar-changes.md) | What the Flask sidecar needs for proper tracing and OTEL logs |
 | [docs/lock-server.md](docs/lock-server.md) | Optional: Cedarling TRACE records to a Janssen Lock Server |
 
